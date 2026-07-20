@@ -3,6 +3,7 @@ import json
 import os
 import calendar
 import uuid
+import hashlib
 import matplotlib.pyplot as plt
 from datetime import date, timedelta
 
@@ -25,26 +26,43 @@ AVG_MARKET_RETURN = 0.07
 def future_value(amount, years, rate=AVG_MARKET_RETURN):
     return amount * ((1 + rate) ** years)
 
+def hash_password(password):
+    """Turn a password into a scrambled, one-way string. The real password is never stored."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
 st.set_page_config(page_title="Teen Budget Tracker", layout="centered")
 
-# ---------------- USERNAME / PROFILE ----------------
+# ---------------- USERNAME / PASSWORD ----------------
+USERS_FILENAME = "users.json"
+if os.path.exists(USERS_FILENAME):
+    with open(USERS_FILENAME, "r") as f:
+        all_users = json.load(f)
+else:
+    all_users = {}
+
 st.sidebar.subheader("👤 Your Profile")
-raw_username = st.sidebar.text_input(
-    "Enter a username",
-    value=st.session_state.get("username_input", ""),
-    help="This keeps your data separate from anyone else using this link. It's not a password — anyone who types the same username sees the same data."
-)
+raw_username = st.sidebar.text_input("Username", value=st.session_state.get("username_input", ""))
+raw_password = st.sidebar.text_input("Password", type="password")
 st.session_state.username_input = raw_username
 
-if not raw_username.strip():
+username = "".join(c for c in raw_username.strip().lower().replace(" ", "_") if c.isalnum() or c == "_")
+
+if not username or not raw_password:
     st.title("💰 Teen Budget Tracker")
-    st.info("👈 Enter a username in the sidebar to get started. Pick something only you would know, and remember it — there's no password recovery.")
+    st.info("👈 Enter a username and password in the sidebar. First time here? Just make one up — it'll create your account automatically.")
     st.stop()
 
-username = "".join(c for c in raw_username.strip().lower().replace(" ", "_") if c.isalnum() or c == "_")
-if not username:
-    st.warning("Please use letters or numbers in your username.")
-    st.stop()
+if username not in all_users:
+    # First time seeing this username -- create the account right now
+    all_users[username] = hash_password(raw_password)
+    with open(USERS_FILENAME, "w") as f:
+        json.dump(all_users, f, indent=2)
+    st.sidebar.success("Account created!")
+else:
+    if hash_password(raw_password) != all_users[username]:
+        st.title("💰 Teen Budget Tracker")
+        st.error("Incorrect password for that username.")
+        st.stop()
 
 FILENAME = f"transactions_{username}.json"
 GOALS_FILENAME = f"goals_{username}.json"
