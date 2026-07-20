@@ -25,10 +25,33 @@ AVG_MARKET_RETURN = 0.07
 def future_value(amount, years, rate=AVG_MARKET_RETURN):
     return amount * ((1 + rate) ** years)
 
-FILENAME = "transactions.json"
+st.set_page_config(page_title="Teen Budget Tracker", layout="centered")
 
-# --- Load saved data, migrate old entries that have no date yet ---
-if "transactions" not in st.session_state:
+# ---------------- USERNAME / PROFILE ----------------
+st.sidebar.subheader("👤 Your Profile")
+raw_username = st.sidebar.text_input(
+    "Enter a username",
+    value=st.session_state.get("username_input", ""),
+    help="This keeps your data separate from anyone else using this link. It's not a password — anyone who types the same username sees the same data."
+)
+st.session_state.username_input = raw_username
+
+if not raw_username.strip():
+    st.title("💰 Teen Budget Tracker")
+    st.info("👈 Enter a username in the sidebar to get started. Pick something only you would know, and remember it — there's no password recovery.")
+    st.stop()
+
+username = "".join(c for c in raw_username.strip().lower().replace(" ", "_") if c.isalnum() or c == "_")
+if not username:
+    st.warning("Please use letters or numbers in your username.")
+    st.stop()
+
+FILENAME = f"transactions_{username}.json"
+GOALS_FILENAME = f"goals_{username}.json"
+REMINDERS_FILENAME = f"reminders_{username}.json"
+
+# Reload data whenever the username changes (including the very first load)
+if st.session_state.get("loaded_username") != username:
     if os.path.exists(FILENAME):
         with open(FILENAME, "r") as f:
             loaded = json.load(f)
@@ -41,25 +64,20 @@ if "transactions" not in st.session_state:
             t["id"] = uuid.uuid4().hex
     st.session_state.transactions = loaded
 
-if "month_offset" not in st.session_state:
-    st.session_state.month_offset = 0  # 0 = current month, -1 = last month, +1 = next month
-
-GOALS_FILENAME = "goals.json"
-REMINDERS_FILENAME = "reminders.json"
-
-if "goals" not in st.session_state:
     if os.path.exists(GOALS_FILENAME):
         with open(GOALS_FILENAME, "r") as f:
             st.session_state.goals = json.load(f)
     else:
         st.session_state.goals = []
 
-if "reminders" not in st.session_state:
     if os.path.exists(REMINDERS_FILENAME):
         with open(REMINDERS_FILENAME, "r") as f:
             st.session_state.reminders = json.load(f)
     else:
         st.session_state.reminders = []
+
+    st.session_state.loaded_username = username
+    st.session_state.month_offset = 0
 
 def save_goals():
     with open(GOALS_FILENAME, "w") as f:
@@ -69,7 +87,7 @@ def save_reminders():
     with open(REMINDERS_FILENAME, "w") as f:
         json.dump(st.session_state.reminders, f, indent=2)
 
-st.set_page_config(page_title="Teen Budget Tracker", layout="centered")
+st.sidebar.caption(f"Signed in as **{username}**")
 st.title("💰 Teen Budget Tracker")
 
 # ---------------- REMINDERS BANNER ----------------
