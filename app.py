@@ -6,6 +6,7 @@ import uuid
 import hashlib
 import matplotlib.pyplot as plt
 from datetime import date, timedelta
+from supabase import create_client
 
 CATEGORY_ICONS = {
     "food": "🍔",
@@ -32,14 +33,32 @@ def hash_password(password):
 
 st.set_page_config(page_title="Teen Budget Tracker", layout="centered")
 
-# ---------------- USERNAME / PASSWORD ----------------
-USERS_FILENAME = "users.json"
-if os.path.exists(USERS_FILENAME):
-    with open(USERS_FILENAME, "r") as f:
-        all_users = json.load(f)
-else:
-    all_users = {}
+# ---------------- DATABASE CONNECTION ----------------
+supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
+def db_load(uname, record_type, default):
+    """Fetch one record (transactions, goals, reminders, or auth) for a user from the database."""
+    try:
+        res = supabase.table("budget_data").select("data").eq("username", uname).eq("record_type", record_type).execute()
+        if res.data:
+            return res.data[0]["data"]
+        return default
+    except Exception as e:
+        st.error(f"Database read error: {e}")
+        return default
+
+def db_save(uname, record_type, value):
+    """Save one record (transactions, goals, reminders, or auth) for a user to the database."""
+    try:
+        existing = supabase.table("budget_data").select("id").eq("username", uname).eq("record_type", record_type).execute()
+        if existing.data:
+            supabase.table("budget_data").update({"data": value}).eq("username", uname).eq("record_type", record_type).execute()
+        else:
+            supabase.table("budget_data").insert({"username": uname, "record_type": record_type, "data": value}).execute()
+    except Exception as e:
+        st.error(f"Database write error: {e}")
+
+# ---------------- USERNAME / PASSWORD ----------------
 st.sidebar.subheader("👤 Your Profile")
 mode = st.sidebar.radio("", ["Log In", "Sign Up"], horizontal=True, label_visibility="collapsed")
 raw_username = st.sidebar.text_input("Username", value=st.session_state.get("username_input", ""))
@@ -129,66 +148,48 @@ if not username or not raw_password:
     """, unsafe_allow_html=True)
     st.stop()
 
+existing_auth = db_load(username, "auth", None)
+
 if mode == "Sign Up":
-    if username in all_users:
+    if existing_auth is not None:
         st.title("💰 Teen Budget Tracker")
         st.error("That username is already taken. Try a different one, or switch to **Log In** if it's yours.")
         st.stop()
     else:
-        all_users[username] = hash_password(raw_password)
-        with open(USERS_FILENAME, "w") as f:
-            json.dump(all_users, f, indent=2)
+        db_save(username, "auth", {"password_hash": hash_password(raw_password)})
         st.sidebar.success("Account created! You're logged in.")
 else:  # Log In
-    if username not in all_users:
+    if existing_auth is None:
         st.title("💰 Teen Budget Tracker")
         st.error("No account found with that username. Switch to **Sign Up** to create one.")
         st.stop()
-    if hash_password(raw_password) != all_users[username]:
+    if hash_password(raw_password) != existing_auth["password_hash"]:
         st.title("💰 Teen Budget Tracker")
         st.error("Incorrect password for that username.")
         st.stop()
 
-FILENAME = f"transactions_{username}.json"
-GOALS_FILENAME = f"goals_{username}.json"
-REMINDERS_FILENAME = f"reminders_{username}.json"
-
 # Reload data whenever the username changes (including the very first load)
 if st.session_state.get("loaded_username") != username:
-    if os.path.exists(FILENAME):
-        with open(FILENAME, "r") as f:
-            loaded = json.load(f)
-    else:
-        loaded = []
+    loaded = db_load(username, "transactions", [])
     for t in loaded:
         if "date" not in t:
             t["date"] = date.today().isoformat()
         if "id" not in t:
             t["id"] = uuid.uuid4().hex
     st.session_state.transactions = loaded
-
-    if os.path.exists(GOALS_FILENAME):
-        with open(GOALS_FILENAME, "r") as f:
-            st.session_state.goals = json.load(f)
-    else:
-        st.session_state.goals = []
-
-    if os.path.exists(REMINDERS_FILENAME):
-        with open(REMINDERS_FILENAME, "r") as f:
-            st.session_state.reminders = json.load(f)
-    else:
-        st.session_state.reminders = []
-
+    st.session_state.goals = db_load(username, "goals", [])
+    st.session_state.reminders = db_load(username, "reminders", [])
     st.session_state.loaded_username = username
     st.session_state.month_offset = 0
 
 def save_goals():
-    with open(GOALS_FILENAME, "w") as f:
-        json.dump(st.session_state.goals, f, indent=2)
+    db_save(username, "goals", st.session_state.goals)
 
 def save_reminders():
-    with open(REMINDERS_FILENAME, "w") as f:
-        json.dump(st.session_state.reminders, f, indent=2)
+    db_save(username, "reminders", st.session_state.reminders)
+
+def save_transactions():
+    db_save(username, "transactions", st.session_state.transactions)
 
 st.sidebar.caption(f"Signed in as **{username}**")
 st.title("💰 Teen Budget Tracker")
@@ -232,8 +233,7 @@ if st.button("Add Transaction"):
         "date": entry_date.isoformat(),
         "goal": goal_for_this_entry
     })
-    with open(FILENAME, "w") as f:
-        json.dump(st.session_state.transactions, f, indent=2)
+    save_transactions()
     st.success("Added!")
     if entry_type == "expense" and category != "savings" and amount > 0:
         fv = future_value(amount, 10)
@@ -582,8 +582,7 @@ if st.session_state.transactions:
             selected_txn["amount"] = edit_amount
             selected_txn["date"] = edit_date.isoformat()
             selected_txn["category"] = edit_category
-            with open(FILENAME, "w") as f:
-                json.dump(st.session_state.transactions, f, indent=2)
+            save_transactions()
             st.success("Updated!")
             st.rerun()
     with btn_col2:
@@ -591,8 +590,7 @@ if st.session_state.transactions:
             st.session_state.transactions = [
                 t for t in st.session_state.transactions if t["id"] != selected_id
             ]
-            with open(FILENAME, "w") as f:
-                json.dump(st.session_state.transactions, f, indent=2)
+            save_transactions()
             st.success("Deleted.")
             st.rerun()
 else:
